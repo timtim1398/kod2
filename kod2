@@ -1,0 +1,86 @@
+# Импортируем необходимые библиотеки
+import RPi.GPIO as GPIO
+import time
+import Adafruit_ADS1x15
+import Adafruit_PCA9685
+
+# Создаем объекты для чтения данных с ADS1115 и управления PCA9685
+adc = Adafruit_ADS1x15.ADS1115()
+pwm = Adafruit_PCA9685.PCA9685()
+
+# Устанавливаем режим работы GPIO
+GPIO.setmode(GPIO.BCM)
+
+# Определяем пин датчика Холла и подключаем его к прерыванию
+hall_pin = 17 # Можно изменить в зависимости от подключения
+GPIO.setup(hall_pin, GPIO.IN)
+GPIO.add_event_detect(hall_pin, GPIO.RISING) # Прерывание по нарастающему фронту
+
+# Определяем каналы для управления моторами и устанавливаем частоту ШИМ
+motor1_channel = 0 # Можно изменить в зависимости от подключения
+motor2_channel = 1 # Можно изменить в зависимости от подключения
+motor3_channel = 2 # Можно изменить в зависимости от подключения
+
+pwm_frequency = 50 # Гц, можно изменить по желанию
+pwm.set_pwm_freq(pwm_frequency)
+
+# Определяем константы для расчета скорости и выбора мотора
+wheel_diameter = 0.3 # метры, диаметр колеса (можно изменить)
+wheel_circumference = wheel_diameter * math.pi # метры, длина окружности колеса
+
+speed_limit = 100 # км/ч, предел скорости (можно изменить)
+speed_interval = speed_limit / 3 # км/ч, интервал скорости для выбора мотора
+
+potentiometer_channel = 0 # номер канала на ADS1115 для потенциометра (можно изменить)
+adc_gain = 1 # коэффициент усиления для ADS1115 (можно изменить)
+
+min_duty_cycle = 0 # минимальный коэффициент заполнения ШИМ (можно изменить)
+max_duty_cycle = 100 # максимальный коэффициент заполнения ШИМ (можно изменить)
+
+min_adc_value = 0 # минимальное значение с АЦП (можно изменить)
+max_adc_value = 32767 # максимальное значение с АЦП (можно изменить)
+
+# Функция для расчета скорости по количеству импульсов с датчика Холла за определенное время
+def calculate_speed(pulses, time):
+    distance = pulses * wheel_circumference / 1000 # километры, пройденное расстояние за время измерения 
+    speed = distance / time * 3600 # километры в час, скорость за время измерения 
+    return speed
+
+# Функция для выбора активного мотора по текущей скорости 
+def select_motor(speed):
+    if speed < speed_interval:
+        return motor1_channel
+    elif speed < speed_interval * 2:
+        return motor2_channel
+    else:
+        return motor3_channel
+
+# Функция для установки коэффициента заполнения ШИМ на выбранном канале по значению потенциометра 
+def set_motor_power(channel):
+    adc_value = adc.read_adc(potentiometer_channel, gain=adc_gain) # читаем значение с АЦП 
+    duty_cycle = min_duty_cycle + (max_duty_cycle - min_duty_cycle) * (adc_value - min_adc_value) / (max_adc_value - min_adc_value) # преобразуем значение с АЦП в коэффициент заполнения ШИМ 
+    pwm_value = int(duty_cycle / 100 * 4095) # преобразуем коэффициент заполнения ШИМ в значение для PCA9685 
+    pwm.set_pwm(channel, 0, pwm_value) # устанавливаем значение на выбранном канале 
+
+# Основной цикл программы
+try:
+    while True:
+        start_time = time.time() # запоминаем время начала измерения 
+        pulse_count = 0 # обнуляем счетчик импульсов 
+
+        while time.time() - start_time < 1: # измеряем в течение одной секунды 
+            if GPIO.event_detected(hall_pin): # если произошло прерывание от датчика Холла 
+                pulse_count += 1 # увеличиваем счетчик импульсов 
+
+        current_speed = calculate_speed(pulse_count, 1) # рассчитываем скорость по количеству импульсов за одну секунду 
+        print("Current speed: {} km/h".format(current_speed)) # выводим скорость на экран 
+
+        active_motor = select_motor(current_speed) # выбираем активный мотор по текущей скорости 
+        print("Active motor: {}".format(active_motor)) # выводим номер активного мотора на экран 
+
+        set_motor_power(active_motor) # устанавливаем мощность на активном моторе по значению потенциометра 
+
+except KeyboardInterrupt: # если нажата клавиша Ctrl+C
+    print("Program stopped by user") # выводим сообщение о завершении программы 
+    GPIO.cleanup() # очищаем пины GPIO
+
